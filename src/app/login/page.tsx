@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import React, { useState } from "react";
+import { PasswordInput } from "@/components/password-input";
 import {
   AlertIcon,
   AuthShell,
@@ -10,37 +11,41 @@ import {
   INPUT_CLASS,
   LABEL_CLASS,
   PRIMARY_BUTTON_CLASS,
+  Spinner,
 } from "@/components/ui";
+import { apiFetch } from "@/lib/api";
 
 export default function LoginPage() {
   // Déclaration des variables d'état pour les champs et les erreurs
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    setIsLoading(true);
 
     try {
-      // Appel API vers la route login du backend
-      const res = await fetch("http://localhost:8080/api/auth/login", {
+      // Appel API vers la route login du backend (le cookie JWT est stocké via credentials: "include")
+      const res = await apiFetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-        credentials: "include", // Indispensable pour stocker le cookie JWT
+        body: JSON.stringify({ email: email.trim(), password }),
       });
 
       if (res.ok) {
         // Redirection vers le tableau de bord si la connexion reussi
         router.push("/dashboard");
-      } else {
-        setError("Email ou mot de passe incorrect.");
+        return; // On garde le bouton en chargement pendant la navigation
       }
-    } catch (err) {
-      setError("Erreur de connexion au serveur");
+      setError("Email ou mot de passe incorrect.");
+    } catch {
+      setError("Impossible de joindre le serveur. Vérifiez votre connexion et réessayez.");
     }
+    setIsLoading(false);
   };
 
   return (
@@ -62,30 +67,34 @@ export default function LoginPage() {
             <input
               id="email"
               type="email"
+              autoComplete="email"
+              autoFocus
               value={email}
               // Met à jour la variable d'état à chaque frappe
               onChange={(e) => setEmail(e.target.value)}
               className={INPUT_CLASS}
               required
+              disabled={isLoading}
             />
           </div>
 
           <div>
             <label htmlFor="password" className={LABEL_CLASS}>Mot de passe</label>
-            <input
+            <PasswordInput
               id="password"
-              type="password"
+              autoComplete="current-password"
               value={password}
               // Met à jour la variable d'état du mot de passe
               onChange={(e) => setPassword(e.target.value)}
-              className={INPUT_CLASS}
               required
+              disabled={isLoading}
             />
           </div>
         </div>
 
-        <button type="submit" className={`${PRIMARY_BUTTON_CLASS} w-full`}>
-          Se connecter
+        <button type="submit" disabled={isLoading} className={`${PRIMARY_BUTTON_CLASS} w-full`}>
+          {isLoading && <Spinner />}
+          {isLoading ? "Connexion..." : "Se connecter"}
         </button>
 
         {/* Lien vers la page d'inscription */}
@@ -94,7 +103,7 @@ export default function LoginPage() {
             href="/register"
             className="font-medium text-teal-800 underline decoration-teal-800/30 underline-offset-4 transition-colors hover:decoration-teal-800"
           >
-            Pas encore de compte ? S'inscrire
+            Pas encore de compte ? S&apos;inscrire
           </Link>
         </p>
       </form>

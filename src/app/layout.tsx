@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Fraunces, IBM_Plex_Mono, Plus_Jakarta_Sans } from "next/font/google";
+import { ToastProvider } from "@/components/toast";
 import "./globals.css";
 
 const jakarta = Plus_Jakarta_Sans({
@@ -20,7 +21,10 @@ const plexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Job Tracker",
+  title: {
+    default: "Job Tracker",
+    template: "%s · Job Tracker",
+  },
   description: "Suivi de candidatures et analyse de compatibilité CV / offre.",
 };
 
@@ -31,7 +35,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${jakarta.variable} ${fraunces.variable} ${plexMono.variable} h-full antialiased`}
     >
       <body className="flex min-h-full flex-col bg-canvas font-sans text-ink">
-        {children}
+        <ToastProvider>{children}</ToastProvider>
       </body>
     </html>
   );

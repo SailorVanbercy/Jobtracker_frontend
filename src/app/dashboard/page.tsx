@@ -1,259 +1,399 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { ApplicationCard, type ApplicationEdit } from "@/components/application-card";
+import { ConfirmDialog } from "@/components/confirm-dialog";
+import { useToast } from "@/components/toast";
 import {
   AlertIcon,
-  Brand,
   CARD_CLASS,
   ERROR_ALERT_CLASS,
+  INPUT_CLASS,
   PRIMARY_BUTTON_CLASS,
+  SECONDARY_BUTTON_CLASS,
 } from "@/components/ui";
+import { useCurrentUser } from "@/hooks/use-current-user";
+import { useSessionExpired } from "@/hooks/use-session-expired";
+import { apiFetch, isUnauthorized } from "@/lib/api";
+import {
+  countByStatus,
+  filterApplications,
+  getStatus,
+  SORT_OPTIONS,
+  sortApplications,
+  STATUS_OPTIONS,
+  type ApplicationStatus,
+  type JobApplication,
+  type SortKey,
+  type StatusFilter,
+} from "@/lib/applications";
 
-const STRONG_MATCH_THRESHOLD = 75;
-const MEDIUM_MATCH_THRESHOLD = 50;
 const CARD_STAGGER_MS = 60;
+const SKELETON_CARD_COUNT = 4;
+const NETWORK_ERROR = "Impossible de joindre le serveur. Vérifiez votre connexion et réessayez.";
 
-const STATUS_STYLES: Record<string, string> = {
-  DRAFT: "bg-stone-100 text-stone-700 ring-stone-200",
-  APPLIED: "bg-sky-50 text-sky-800 ring-sky-200",
-  INTERVIEWING: "bg-amber-50 text-amber-800 ring-amber-200",
-  OFFER: "bg-emerald-50 text-emerald-800 ring-emerald-200",
-  REJECTED: "bg-rose-50 text-rose-800 ring-rose-200",
-};
+type LoadState = "loading" | "error" | "ready";
 
-const getScoreTone = (score: number) => {
-  if (score > STRONG_MATCH_THRESHOLD) return { text: "text-emerald-700", bar: "bg-emerald-500" };
-  if (score > MEDIUM_MATCH_THRESHOLD) return { text: "text-amber-700", bar: "bg-amber-500" };
-  return { text: "text-rose-700", bar: "bg-rose-500" };
-};
+const FILTERS: { value: StatusFilter; label: string }[] = [
+  { value: "ALL", label: "Toutes" },
+  ...STATUS_OPTIONS,
+];
 
-export default function DashboardPage(){
-    const [applications, setApplications] = useState<any[]>([]);
-    const [error, setError] = useState("");
-    const router = useRouter();
+type LoadResult =
+  | { kind: "ok"; data: JobApplication[] }
+  | { kind: "unauthorized" }
+  | { kind: "error" };
 
-    useEffect(() => {
-        const fetchApplications = async () => {
-            try{
-                // Appel API pour récupérer les candidatures
-                const res = await fetch("http://localhost:8080/api/applications", {
-                    // Envoie le cookie JWT avec la requête
-                    credentials: "include",
-                });
+// Appel API pour récupérer les candidatures (cookie JWT envoyé automatiquement)
+async function loadApplications(): Promise<LoadResult> {
+  try {
+    const res = await apiFetch("/api/applications");
+    if (res.ok) return { kind: "ok", data: await res.json() };
+    if (isUnauthorized(res)) return { kind: "unauthorized" };
+    return { kind: "error" };
+  } catch {
+    return { kind: "error" };
+  }
+}
 
-                if(res.ok){
-                    // Si le token est valide, on stocke les données
-                    const data = await res.json();
-                    setApplications(data);
-                }else if (res.status === 401 || res.status === 403){
-                    // Si pas de cookie ou cookie expiré -> retour au login
-                    router.push("/login");
-                }else{
-                    setError("Erreur lors de la récupération des données");
-                }
-            }
-            catch(err){
-                setError("Erreur de connexion au serveur");
-            }
-        };
-        fetchApplications();
+function SkeletonCard() {
+  return (
+    <li aria-hidden className={`${CARD_CLASS} p-5`}>
+      <div className="flex animate-pulse items-start gap-3.5">
+        <span className="size-11 rounded-xl bg-stone-100" />
+        <div className="flex-1 space-y-2.5 pt-1">
+          <span className="block h-3 w-2/5 rounded-full bg-stone-200" />
+          <span className="block h-2.5 w-3/5 rounded-full bg-stone-100" />
+        </div>
+      </div>
+      <span className="mt-5 block h-6 w-24 animate-pulse rounded-full bg-stone-100" />
+    </li>
+  );
+}
 
-    }, [router])
+export default function DashboardPage() {
+  const [applications, setApplications] = useState<JobApplication[]>([]);
+  const [loadState, setLoadState] = useState<LoadState>("loading");
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
+  const [sortKey, setSortKey] = useState<SortKey>("recent");
+  const [pendingStatusIds, setPendingStatusIds] = useState<Set<string>>(() => new Set());
+  const [appToDelete, setAppToDelete] = useState<JobApplication | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const showToast = useToast();
+  const onSessionExpired = useSessionExpired();
+  // Seul le cas "profil chargé sans CV" est utilisé ici ; la session est gérée par le chargement des candidatures
+  const currentUser = useCurrentUser();
+  const isResumeMissing = currentUser.kind === "ok" && !currentUser.profile.hasResume;
 
-    // Appel API en DELETE pour supprimer une candidature
-  const handleDelete = async (id: string) => {
-    // Demande confirmation avant de lancer la suppression
-    if (!window.confirm("Supprimer définitivement cette candidature ?")) return;
+  const [reloadKey, setReloadKey] = useState(0);
 
-    try {
-      const res = await fetch(`http://localhost:8080/api/applications/${id}`, {
-        method: "DELETE",
-        credentials: "include", // Indispensable pour l'authentification JWT
-      });
+  useEffect(() => {
+    // Ignore la réponse si le composant est démonté ou si un nouveau chargement a démarré
+    let isCancelled = false;
 
-      if (res.ok) {
-        // Met à jour la liste affichée en retirant l'élément supprimé sans recharger la page
-        setApplications(applications.filter((app: any) => app.id !== id));
+    loadApplications().then((result) => {
+      if (isCancelled) return;
+      if (result.kind === "ok") {
+        setApplications(result.data);
+        setLoadState("ready");
+      } else if (result.kind === "unauthorized") {
+        // Si pas de cookie ou cookie expiré -> retour au login
+        onSessionExpired();
       } else {
-        setError("Erreur lors de la suppression.");
+        setLoadState("error");
       }
-    } catch (err) {
-      setError("Erreur de connexion au serveur.");
-    }
+    });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [reloadKey, onSessionExpired]);
+
+  const handleRetry = () => {
+    setLoadState("loading");
+    setReloadKey((key) => key + 1);
   };
 
-  // Appel API en PUT pour modifier le statut
-  const handleStatusChange = async (id: string, newStatus: string) => {
+  const setStatusPending = (id: string, isPending: boolean) => {
+    setPendingStatusIds((current) => {
+      const next = new Set(current);
+      if (isPending) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  };
+
+  // Mise à jour optimiste du statut, avec retour arrière en cas d'échec
+  const handleStatusChange = async (id: string, newStatus: ApplicationStatus) => {
+    const previous = applications.find((app) => app.id === id);
+    if (!previous) return;
+
+    const applyStatus = (status: JobApplication["status"]) =>
+      setApplications((current) => current.map((app) => (app.id === id ? { ...app, status } : app)));
+
+    applyStatus(newStatus);
+    setStatusPending(id, true);
+
     try {
-      const res = await fetch(`http://localhost:8080/api/applications/${id}/status`, {
+      const res = await apiFetch(`/api/applications/${id}/status`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: newStatus }),
-        credentials: "include", // Conserve le cookie JWT
       });
 
-      if (res.ok) {
-        // Mise à jour de l'affichage en temps réel
-        setApplications(applications.map((app: any) =>
-          app.id === id ? { ...app, status: newStatus } : app
-        ));
-      } else {
-        setError("Erreur lors de la mise à jour du statut.");
+      if (!res.ok) {
+        applyStatus(previous.status);
+        if (isUnauthorized(res)) onSessionExpired();
+        else showToast("Le statut n'a pas pu être mis à jour.", "error");
       }
-    } catch (err) {
-      setError("Erreur réseau.");
+    } catch {
+      applyStatus(previous.status);
+      showToast(NETWORK_ERROR, "error");
+    } finally {
+      setStatusPending(id, false);
     }
   };
 
+  // Appel API en PUT pour modifier l'entreprise et le poste
+  const handleSave = async (id: string, edit: ApplicationEdit) => {
+    const current = applications.find((app) => app.id === id);
+    if (!current) return false;
+
+    try {
+      const res = await apiFetch(`/api/applications/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...edit, status: getStatus(current) }),
+      });
+
+      if (res.ok) {
+        const updated: JobApplication = await res.json();
+        setApplications((apps) => apps.map((app) => (app.id === id ? { ...app, ...updated } : app)));
+        showToast("Candidature mise à jour.", "success");
+        return true;
+      }
+      if (isUnauthorized(res)) onSessionExpired();
+      else showToast("La candidature n'a pas pu être modifiée.", "error");
+    } catch {
+      showToast(NETWORK_ERROR, "error");
+    }
+    return false;
+  };
+
+  // Appel API en DELETE, déclenché depuis la fenêtre de confirmation
+  const handleConfirmDelete = async () => {
+    if (!appToDelete) return;
+    setIsDeleting(true);
+
+    try {
+      const res = await apiFetch(`/api/applications/${appToDelete.id}`, { method: "DELETE" });
+
+      if (res.ok) {
+        // Retire l'élément supprimé sans recharger la page
+        setApplications((apps) => apps.filter((app) => app.id !== appToDelete.id));
+        showToast(`Candidature ${appToDelete.companyName} supprimée.`, "success");
+        setAppToDelete(null);
+      } else if (isUnauthorized(res)) {
+        onSessionExpired();
+      } else {
+        showToast("La suppression a échoué.", "error");
+      }
+    } catch {
+      showToast(NETWORK_ERROR, "error");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const counts = useMemo(() => countByStatus(applications), [applications]);
+  const visibleApplications = useMemo(
+    () => sortApplications(filterApplications(applications, { query, status: statusFilter }), sortKey),
+    [applications, query, statusFilter, sortKey],
+  );
+  const hasActiveFilters = query.trim() !== "" || statusFilter !== "ALL";
+
+  const resetFilters = () => {
+    setQuery("");
+    setStatusFilter("ALL");
+  };
+
   return (
-    <div className="min-h-screen">
-      <header className="sticky top-0 z-10 border-b border-stone-900/6 bg-canvas/80 backdrop-blur-md">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-6 py-3.5">
-          <Brand />
+    <main className="mx-auto max-w-6xl px-4 pb-20 pt-10 sm:px-6 sm:pt-12">
+      <h1 className="animate-fade-up font-display text-4xl font-medium tracking-tight text-ink sm:text-[2.75rem]">
+        Mon Tableau de Bord
+      </h1>
 
-          <nav className="flex items-center gap-1.5">
-            {/* Bouton vers le profil */}
-            <Link
-              href="/dashboard/profile"
-              className="rounded-lg px-3.5 py-2 text-sm font-medium text-stone-600 transition-colors hover:bg-stone-900/4 hover:text-ink"
-            >
-              Mon Profil
-            </Link>
-            <Link href="/dashboard/new" className={PRIMARY_BUTTON_CLASS}>
-              + Nouvelle candidature
-            </Link>
-          </nav>
+      {/* Sans CV, l'IA ne peut pas calculer de score : on invite l'utilisateur à en ajouter un */}
+      {isResumeMissing && (
+        <div className="mt-8 flex animate-fade-up flex-col gap-3 rounded-xl border border-teal-200 bg-teal-50/60 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between">
+          <p className="flex items-start gap-2.5 text-sm text-teal-900">
+            <svg aria-hidden viewBox="0 0 20 20" fill="currentColor" className="mt-0.5 size-4 shrink-0 text-teal-700">
+              <path fillRule="evenodd" d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Zm-7-4a1 1 0 1 1-2 0 1 1 0 0 1 2 0ZM9 9a.75.75 0 0 0 0 1.5h.253a.25.25 0 0 1 .244.304l-.459 2.066A1.75 1.75 0 0 0 10.747 15H11a.75.75 0 0 0 0-1.5h-.253a.25.25 0 0 1-.244-.304l.459-2.066A1.75 1.75 0 0 0 9.253 9H9Z" clipRule="evenodd" />
+            </svg>
+            Ajoutez votre CV pour obtenir un score de compatibilité sur chaque candidature.
+          </p>
+          <Link
+            href="/dashboard/profile"
+            className="shrink-0 self-start rounded-lg bg-white px-3.5 py-2 text-sm font-semibold text-teal-900 ring-1 ring-teal-200 transition-colors hover:bg-teal-50 sm:self-auto"
+          >
+            Ajouter mon CV
+          </Link>
         </div>
-      </header>
+      )}
 
-      <main className="mx-auto max-w-6xl px-6 pb-20 pt-12">
-        <h1 className="animate-fade-up font-display text-4xl font-medium tracking-tight text-ink sm:text-[2.75rem]">
-          Mon Tableau de Bord
-        </h1>
-
-        {error && (
-          <div role="alert" className={`${ERROR_ALERT_CLASS} mt-6`}>
+      {loadState === "error" ? (
+        <div role="alert" className={`${ERROR_ALERT_CLASS} mt-8 items-center justify-between`}>
+          <span className="flex items-start gap-2.5">
             <AlertIcon />
-            {error}
-          </div>
-        )}
-
-        <div className="mb-5 mt-10 flex items-center gap-2.5">
-          <h2 className="text-sm font-semibold uppercase tracking-[0.08em] text-stone-500">Mes Candidatures</h2>
-          <span className="rounded-full bg-stone-900/6 px-2 py-0.5 font-mono text-xs font-medium text-stone-600">
-            {applications.length}
+            Erreur lors de la récupération des données.
           </span>
+          <button
+            type="button"
+            onClick={handleRetry}
+            className="shrink-0 rounded-md px-2.5 py-1 text-sm font-semibold text-rose-800 underline-offset-4 hover:underline"
+          >
+            Réessayer
+          </button>
         </div>
-
-        {/* Affichage conditionnel de la liste */}
-        {applications.length === 0 ? (
-          <div className="flex flex-col items-center rounded-2xl border border-dashed border-stone-300 bg-white/50 px-6 py-20 text-center">
-            <span className="mb-4 grid size-12 place-items-center rounded-xl bg-teal-50 text-teal-700 ring-1 ring-teal-100">
-              <svg aria-hidden viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" className="size-6">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 14.15v4.25c0 1.094-.787 2.036-1.872 2.18-2.087.277-4.216.42-6.378.42s-4.291-.143-6.378-.42c-1.085-.144-1.872-1.086-1.872-2.18v-4.25m16.5 0a2.18 2.18 0 0 0 .75-1.661V8.706c0-1.081-.768-2.015-1.837-2.175a48.114 48.114 0 0 0-3.413-.387m4.5 8.006c-.194.165-.42.295-.673.38A23.978 23.978 0 0 1 12 15.75c-2.648 0-5.195-.429-7.577-1.22a2.016 2.016 0 0 1-.673-.38m0 0A2.18 2.18 0 0 1 3 12.489V8.706c0-1.081.768-2.015 1.837-2.175a48.111 48.111 0 0 1 3.413-.387m7.5 0V5.25A2.25 2.25 0 0 0 13.5 3h-3a2.25 2.25 0 0 0-2.25 2.25v.894m7.5 0a48.667 48.667 0 0 0-7.5 0" />
-              </svg>
-            </span>
-            <p className="text-sm text-stone-500">Aucune candidature pour le moment.</p>
-          </div>
-        ) : (
-          <ul className="grid gap-4 md:grid-cols-2">
-            {applications.map((app: any, index: number) => {
-              const status = app.status || "APPLIED";
-              const scoreTone = app.resumeMatchScore != null ? getScoreTone(app.resumeMatchScore) : null;
-
-              return (
-                <li
-                  key={app.id}
-                  style={{ animationDelay: `${index * CARD_STAGGER_MS}ms` }}
-                  className={`${CARD_CLASS} group flex animate-fade-up flex-col p-5 transition-[box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:shadow-[0_1px_2px_rgba(28,25,23,0.04),0_20px_40px_-20px_rgba(28,25,23,0.2)]`}
-                >
-                  <div className="flex items-start gap-3.5">
-                    <span
-                      aria-hidden
-                      className="grid size-11 shrink-0 place-items-center rounded-xl bg-linear-to-br from-teal-50 to-stone-100 font-display text-lg font-medium text-teal-900 ring-1 ring-stone-900/6"
-                    >
-                      {app.companyName?.charAt(0)?.toUpperCase()}
+      ) : (
+        <>
+          {/* Filtres par statut, avec compteur */}
+          <div className="mt-8 -mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+            <div role="group" aria-label="Filtrer par statut" className="flex w-max gap-1.5 sm:w-auto sm:flex-wrap">
+              {FILTERS.map((filter) => {
+                const isActive = statusFilter === filter.value;
+                return (
+                  <button
+                    key={filter.value}
+                    type="button"
+                    aria-pressed={isActive}
+                    onClick={() => setStatusFilter(filter.value)}
+                    disabled={loadState === "loading"}
+                    className={`inline-flex items-center gap-2 whitespace-nowrap rounded-full px-3.5 py-1.5 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-4 focus-visible:ring-teal-700/20 disabled:opacity-50 ${
+                      isActive
+                        ? "bg-ink text-white"
+                        : "bg-white text-stone-600 ring-1 ring-inset ring-stone-900/8 hover:bg-stone-50 hover:text-ink"
+                    }`}
+                  >
+                    {filter.label}
+                    <span className={`font-mono text-xs ${isActive ? "text-white/70" : "text-stone-400"}`}>
+                      {loadState === "loading" ? "–" : counts[filter.value]}
                     </span>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-[15px] font-semibold text-ink">{app.companyName}</p>
-                      <p className="truncate text-sm text-stone-500">{app.jobTitle}</p>
-                    </div>
-                    {/* Bouton qui déclenche la suppression au clic */}
-                    <button
-                      onClick={() => handleDelete(app.id)}
-                      className="rounded-md px-2 py-1 text-xs font-medium text-stone-400 opacity-100 transition-[color,background-color,opacity] hover:bg-rose-50 hover:text-rose-700 focus-visible:opacity-100 md:opacity-0 md:group-hover:opacity-100"
-                    >
-                      Supprimer
-                    </button>
-                  </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
 
-                  <div className="mt-4">
-                    <div className="relative inline-flex">
-                      <select
-                        value={status}
-                        onChange={(e) => handleStatusChange(app.id, e.target.value)}
-                        className={`cursor-pointer appearance-none rounded-full py-1 pl-3 pr-7 text-xs font-semibold ring-1 ring-inset transition-shadow focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-700/40 ${
-                          STATUS_STYLES[status] ?? STATUS_STYLES.APPLIED
-                        }`}
-                      >
-                        <option value="DRAFT">Brouillon</option>
-                        <option value="APPLIED">Postulé</option>
-                        <option value="INTERVIEWING">En entretien</option>
-                        <option value="OFFER">Offre reçue</option>
-                        <option value="REJECTED">Refusé</option>
-                      </select>
-                      <svg
-                        aria-hidden
-                        viewBox="0 0 16 16"
-                        fill="currentColor"
-                        className="pointer-events-none absolute right-2 top-1/2 size-3 -translate-y-1/2 opacity-60"
-                      >
-                        <path d="M4.22 6.22a.75.75 0 0 1 1.06 0L8 8.94l2.72-2.72a.75.75 0 1 1 1.06 1.06l-3.25 3.25a.75.75 0 0 1-1.06 0L4.22 7.28a.75.75 0 0 1 0-1.06Z" />
-                      </svg>
-                    </div>
-                  </div>
+          {/* Recherche et tri */}
+          <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center">
+            <div className="relative flex-1">
+              <svg
+                aria-hidden
+                viewBox="0 0 20 20"
+                fill="currentColor"
+                className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-stone-400"
+              >
+                <path fillRule="evenodd" d="M9 3.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11ZM2 9a7 7 0 1 1 12.452 4.391l3.328 3.329a.75.75 0 1 1-1.06 1.06l-3.329-3.328A7 7 0 0 1 2 9Z" clipRule="evenodd" />
+              </svg>
+              <label htmlFor="search" className="sr-only">Rechercher une candidature</label>
+              <input
+                id="search"
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Rechercher une entreprise ou un poste…"
+                className={`${INPUT_CLASS} pl-10`}
+                disabled={loadState === "loading"}
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <label htmlFor="sort" className="whitespace-nowrap text-sm text-stone-500">Trier par</label>
+              <select
+                id="sort"
+                value={sortKey}
+                onChange={(e) => setSortKey(e.target.value as SortKey)}
+                className={`${INPUT_CLASS} w-auto cursor-pointer pr-9`}
+                disabled={loadState === "loading"}
+              >
+                {SORT_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
 
-                  {/* Affichage conditionnel des retours de l'IA */}
-                  {scoreTone && (
-                    <div className="mt-5 space-y-3 border-t border-dashed border-stone-200 pt-4">
-                      <div>
-                        <div className="mb-1.5 flex items-baseline justify-between">
-                          <span className="text-xs font-medium text-stone-500">Match IA :</span>
-                          <span className={`font-mono text-sm font-medium ${scoreTone.text}`}>
-                            {app.resumeMatchScore}%
-                          </span>
-                        </div>
-                        <div className="h-1.5 overflow-hidden rounded-full bg-stone-100">
-                          <div
-                            className={`h-full rounded-full ${scoreTone.bar}`}
-                            style={{ width: `${Math.min(Math.max(app.resumeMatchScore, 0), 100)}%` }}
-                          />
-                        </div>
-                      </div>
+          <div className="mb-4 mt-8 flex items-center gap-2.5">
+            <h2 className="text-sm font-semibold uppercase tracking-[0.08em] text-stone-500">Mes Candidatures</h2>
+            {loadState === "ready" && (
+              <span className="rounded-full bg-stone-900/6 px-2 py-0.5 font-mono text-xs font-medium text-stone-600">
+                {hasActiveFilters ? `${visibleApplications.length}/${applications.length}` : applications.length}
+              </span>
+            )}
+          </div>
 
-                      {app.missingSkills && app.missingSkills.length > 0 && (
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <span className="mr-0.5 text-xs text-stone-500">Manque :</span>
-                          {app.missingSkills.map((skill: string, index: number) => (
-                            <span
-                              key={index}
-                              className="rounded-md bg-stone-100 px-2 py-0.5 text-xs font-medium text-stone-700 ring-1 ring-inset ring-stone-900/4"
-                            >
-                              {skill}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </main>
-    </div>
+          {/* Affichage conditionnel : chargement, vide, aucun résultat, liste */}
+          {loadState === "loading" ? (
+            <ul aria-busy="true" aria-label="Chargement des candidatures" className="grid gap-4 md:grid-cols-2">
+              {Array.from({ length: SKELETON_CARD_COUNT }, (_, index) => (
+                <SkeletonCard key={index} />
+              ))}
+            </ul>
+          ) : applications.length === 0 ? (
+            <div className="flex flex-col items-center rounded-2xl border border-dashed border-stone-300 bg-white/50 px-6 py-16 text-center">
+              <span className="mb-4 grid size-12 place-items-center rounded-xl bg-teal-50 text-teal-700 ring-1 ring-teal-100">
+                <svg aria-hidden viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" className="size-6">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 14.15v4.25c0 1.094-.787 2.036-1.872 2.18-2.087.277-4.216.42-6.378.42s-4.291-.143-6.378-.42c-1.085-.144-1.872-1.086-1.872-2.18v-4.25m16.5 0a2.18 2.18 0 0 0 .75-1.661V8.706c0-1.081-.768-2.015-1.837-2.175a48.114 48.114 0 0 0-3.413-.387m4.5 8.006c-.194.165-.42.295-.673.38A23.978 23.978 0 0 1 12 15.75c-2.648 0-5.195-.429-7.577-1.22a2.016 2.016 0 0 1-.673-.38m0 0A2.18 2.18 0 0 1 3 12.489V8.706c0-1.081.768-2.015 1.837-2.175a48.111 48.111 0 0 1 3.413-.387m7.5 0V5.25A2.25 2.25 0 0 0 13.5 3h-3a2.25 2.25 0 0 0-2.25 2.25v.894m7.5 0a48.667 48.667 0 0 0-7.5 0" />
+                </svg>
+              </span>
+              <p className="text-sm text-stone-500">Aucune candidature pour le moment.</p>
+              <Link href="/dashboard/new" className={`${PRIMARY_BUTTON_CLASS} mt-6`}>
+                Ajouter ma première candidature
+              </Link>
+            </div>
+          ) : visibleApplications.length === 0 ? (
+            <div className="flex flex-col items-center rounded-2xl border border-dashed border-stone-300 bg-white/50 px-6 py-14 text-center">
+              <p className="text-sm text-stone-500">Aucune candidature ne correspond à votre recherche.</p>
+              <button type="button" onClick={resetFilters} className={`${SECONDARY_BUTTON_CLASS} mt-5`}>
+                Réinitialiser les filtres
+              </button>
+            </div>
+          ) : (
+            <ul className="grid gap-4 md:grid-cols-2">
+              {visibleApplications.map((app, index) => (
+                <ApplicationCard
+                  key={app.id}
+                  app={app}
+                  style={{ animationDelay: `${index * CARD_STAGGER_MS}ms` }}
+                  isStatusPending={pendingStatusIds.has(app.id)}
+                  onStatusChange={handleStatusChange}
+                  onRequestDelete={setAppToDelete}
+                  onSave={handleSave}
+                />
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+
+      <ConfirmDialog
+        open={appToDelete !== null}
+        title="Supprimer cette candidature ?"
+        description={
+          <>
+            La candidature <strong className="font-semibold text-ink">{appToDelete?.companyName}</strong>
+            {appToDelete?.jobTitle ? ` (${appToDelete.jobTitle})` : ""} sera définitivement supprimée.
+          </>
+        }
+        confirmLabel="Supprimer"
+        isPending={isDeleting}
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setAppToDelete(null)}
+      />
+    </main>
   );
 }
