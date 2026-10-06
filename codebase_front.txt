@@ -1,0 +1,682 @@
+##### Fichier : package.json
+{
+  "name": "frontend-app",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "next": "16.3.8",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.8",
+    "postcss": "^8.5.29",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
+##### Fichier : postcss.config.mjs
+const config = {
+  plugins: {
+    "@tailwindcss/postcss": {},
+  },
+};
+
+export default config;
+##### Fichier : next.config.ts
+import type { NextConfig } from "next";
+
+const nextConfig: NextConfig = {
+  /* config options here */
+};
+
+export default nextConfig;
+##### Fichier : tsconfig.json
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts",
+    "**/*.mts"
+  ],
+  "exclude": ["node_modules"]
+}
+##### Fichier : src\app\dashboard\new\page.tsx
+"use client";
+
+import { useRouter } from "next/navigation";
+import { useState } from "react";
+
+export default function NewApplicationPage() {
+  const [companyName, setCompanyName] = useState("");
+  const [jobTitle, setJobTitle] = useState("");
+  const [jobDescription, setJobDescription] = useState(""); // Nouvel état pour stocker l'annonce
+  const [error, setError] = useState("");
+  const [isLoading, setIsLoading] = useState(false); // Gestion du bouton de chargement
+  const router = useRouter();
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    setIsLoading(true); // Verrouille le formulaire pendant l'analyse IA
+
+    try {
+      // Appel API avec la nouvelle variable jobDescription
+      const res = await fetch("http://localhost:8080/api/applications", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ companyName, jobTitle, jobDescription }),
+        credentials: "include",
+      });
+
+      if (res.ok) {
+        router.push("/dashboard");
+      } else {
+        setError("Erreur lors de la création de la candidature.");
+      }
+    } catch (err) {
+      setError("Erreur de connexion au serveur.");
+    } finally {
+      setIsLoading(false); // Déverrouille le bouton qu'il y ait succès ou erreur
+    }
+  };
+
+  return (
+    <div className="p-8 bg-gray-50 min-h-screen flex justify-center items-start pt-20">
+      <form onSubmit={handleSubmit} className="bg-white p-6 rounded-lg shadow-md w-full max-w-xl space-y-4">
+        <h1 className="text-2xl font-bold text-gray-800 mb-4">Ajouter une candidature</h1>
+        
+        {error && <div className="text-red-500 text-sm">{error}</div>}
+
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Entreprise</label>
+            <input
+              type="text"
+              value={companyName}
+              onChange={(e) => setCompanyName(e.target.value)}
+              className="w-full px-4 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              required
+              disabled={isLoading}
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Poste</label>
+            <input
+              type="text"
+              value={jobTitle}
+              onChange={(e) => setJobTitle(e.target.value)}
+              className="w-full px-4 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              required
+              disabled={isLoading}
+            />
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Description de l'offre (Optionnel - Déclenche l'IA)
+          </label>
+          <textarea
+            value={jobDescription}
+            onChange={(e) => setJobDescription(e.target.value)}
+            rows={6}
+            placeholder="Collez le texte de l'annonce ici pour analyser votre compatibilité..."
+            className="w-full px-4 py-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none resize-none"
+            disabled={isLoading}
+          />
+        </div>
+
+        <div className="flex gap-4 pt-4">
+          <button
+            type="button"
+            onClick={() => router.push("/dashboard")}
+            className="w-full bg-gray-200 text-gray-800 font-semibold py-2 rounded-lg hover:bg-gray-300 transition"
+            disabled={isLoading}
+          >
+            Annuler
+          </button>
+          <button
+            type="submit"
+            disabled={isLoading}
+            className={`w-full font-semibold py-2 rounded-lg transition text-white ${
+              isLoading ? "bg-blue-400 cursor-not-allowed" : "bg-blue-600 hover:bg-blue-700"
+            }`}
+          >
+            {isLoading ? "Analyse IA en cours..." : "Ajouter & Analyser"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+##### Fichier : src\app\dashboard\profile\page.tsx
+"use client";
+
+import { useRouter } from "next/navigation";
+import { useState } from "react";
+
+export default function ProfilePage() {
+  // Déclaration des états pour le fichier et les messages
+  const [file, setFile] = useState<File | null>(null);
+  const [message, setMessage] = useState({ text: "", type: "" });
+  const [isLoading, setIsLoading] = useState(false);
+  const router = useRouter();
+
+  const handleUpload = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!file) {
+      setMessage({ text: "Veuillez sélectionner un fichier PDF.", type: "error" });
+      return;
+    }
+
+    setIsLoading(true);
+    setMessage({ text: "", type: "" });
+
+    // L'objet FormData est obligatoire pour envoyer des fichiers en JavaScript
+    const formData = new FormData();
+    formData.append("file", file); // La clé "file" doit correspondre à ce qu'attend Spring Boot
+
+    try {
+      // Appel API vers la route d'upload (à adapter selon ton backend exact)
+      const res = await fetch("http://localhost:8080/api/users/me/resume", {
+        method: "POST",
+        // Pas besoin de définir le "Content-Type", fetch le gère tout seul avec FormData
+        body: formData,
+        credentials: "include", // Indispensable pour envoyer ton cookie JWT
+      });
+
+      if (res.ok) {
+        setMessage({ text: "CV sauvegardé et extrait avec succès !", type: "success" });
+        setFile(null); // On vide le champ après succès
+        router.push("/dashboard");
+    
+      } else {
+        setMessage({ text: "Erreur lors de l'envoi du CV.", type: "error" });
+      }
+    } catch (err) {
+      setMessage({ text: "Erreur de connexion au serveur.", type: "error" });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="p-8 bg-gray-50 min-h-screen">
+      <h1 className="text-3xl font-bold mb-6 text-gray-800">Mon Profil</h1>
+
+      <div className="bg-white p-6 rounded-lg shadow max-w-xl">
+        <h2 className="text-xl font-semibold mb-4 text-gray-700">Mettre à jour mon CV (PDF)</h2>
+        
+        {/* Affichage des messages de succès ou d'erreur */}
+        {message.text && (
+          <div className={`p-3 mb-4 rounded-md text-sm ${message.type === "error" ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"}`}>
+            {message.text}
+          </div>
+        )}
+
+        <form onSubmit={handleUpload} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Sélectionnez votre CV (.pdf uniquement)
+            </label>
+            <input
+              type="file"
+              accept="application/pdf"
+              onChange={(e) => setFile(e.target.files?.[0] || null)}
+              className="block w-full text-sm text-gray-500
+                file:mr-4 file:py-2 file:px-4
+                file:rounded-md file:border-0
+                file:text-sm file:font-semibold
+                file:bg-blue-50 file:text-blue-700
+                hover:file:bg-blue-100 cursor-pointer"
+              disabled={isLoading}
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={isLoading || !file}
+            className={`w-full font-semibold py-2 rounded-lg transition text-white ${
+              isLoading || !file ? "bg-blue-400 cursor-not-allowed" : "bg-blue-600 hover:bg-blue-700"
+            }`}
+          >
+            {isLoading ? "Traitement et extraction en cours..." : "Uploader mon CV"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+##### Fichier : src\app\dashboard\page.tsx
+"use client";
+
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+
+export default function DashboardPage(){
+    const [applications, setApplications] = useState<any[]>([]);
+    const [error, setError] = useState("");
+    const router = useRouter();
+
+    useEffect(() => {
+        const fetchApplications = async () => {
+            try{
+                // Appel API pour récupérer les candidatures
+                const res = await fetch("http://localhost:8080/api/applications", {
+                    // Envoie le cookie JWT avec la requête
+                    credentials: "include",
+                });
+
+                if(res.ok){
+                    // Si le token est valide, on stocke les données
+                    const data = await res.json();
+                    setApplications(data);
+                }else if (res.status === 401 || res.status === 403){
+                    // Si pas de cookie ou cookie expiré -> retour au login
+                    router.push("/login");
+                }else{
+                    setError("Erreur lors de la récupération des données");
+                }
+            }
+            catch(err){
+                setError("Erreur de connexion au serveur");
+            }
+        };
+        fetchApplications();
+
+    }, [router])
+
+    // Appel API en DELETE pour supprimer une candidature
+  const handleDelete = async (id: string) => {
+    // Demande confirmation avant de lancer la suppression
+    if (!window.confirm("Supprimer définitivement cette candidature ?")) return;
+
+    try {
+      const res = await fetch(`http://localhost:8080/api/applications/${id}`, {
+        method: "DELETE",
+        credentials: "include", // Indispensable pour l'authentification JWT
+      });
+
+      if (res.ok) {
+        // Met à jour la liste affichée en retirant l'élément supprimé sans recharger la page
+        setApplications(applications.filter((app: any) => app.id !== id));
+      } else {
+        setError("Erreur lors de la suppression.");
+      }
+    } catch (err) {
+      setError("Erreur de connexion au serveur.");
+    }
+  };
+
+  // Appel API en PUT pour modifier le statut
+  const handleStatusChange = async (id: string, newStatus: string) => {
+    try {
+      const res = await fetch(`http://localhost:8080/api/applications/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus }),
+        credentials: "include", // Conserve le cookie JWT
+      });
+
+      if (res.ok) {
+        // Mise à jour de l'affichage en temps réel
+        setApplications(applications.map((app: any) => 
+          app.id === id ? { ...app, status: newStatus } : app
+        ));
+      } else {
+        setError("Erreur lors de la mise à jour du statut.");
+      }
+    } catch (err) {
+      setError("Erreur réseau.");
+    }
+  };
+
+    return (
+    <div className="p-8 bg-gray-50 min-h-screen">
+      <h1 className="text-3xl font-bold mb-6 text-gray-800">Mon Tableau de Bord</h1>
+      
+      {error && <div className="text-red-500 mb-4">{error}</div>}
+    
+    <div className="mb-4 flex justify-end gap-4">
+        {/* NOUVEAU : Bouton vers le profil */}
+        <Link 
+          href="/dashboard/profile" 
+          className="bg-gray-200 text-gray-800 px-4 py-2 rounded-lg font-medium hover:bg-gray-300 transition"
+        >
+          Mon Profil
+        </Link>
+        <Link 
+          href="/dashboard/new" 
+          className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition"
+        >
+          + Nouvelle candidature
+        </Link>
+      </div>
+
+      <div className="bg-white p-6 rounded-lg shadow"></div>
+      <div className="bg-white p-6 rounded-lg shadow">
+        <h2 className="text-xl font-semibold mb-4 text-gray-700">
+          Mes Candidatures ({applications.length})
+        </h2>
+        
+        {/* Affichage conditionnel de la liste */}
+        {applications.length === 0 ? (
+          <p className="text-gray-500">Aucune candidature pour le moment.</p>
+        ) : (
+          <ul className="space-y-4">
+            {applications.map((app: any) => (
+              <li key={app.id} className="p-5 border rounded-lg hover:shadow-md transition bg-white flex flex-col gap-3">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <span className="font-bold text-lg text-gray-800">{app.companyName}</span>
+                    <span className="text-gray-500 font-medium ml-2">{app.jobTitle}</span>
+                  </div>
+                  <div className="flex gap-3 items-center">
+                    <select
+                      value={app.status || "APPLIED"}
+                      onChange={(e) => handleStatusChange(app.id, e.target.value)}
+                      className="text-sm bg-blue-50 text-blue-800 border border-blue-200 px-2 py-1 rounded-md font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                    >
+                      <option value="DRAFT">Brouillon</option>
+                      <option value="APPLIED">Postulé</option>
+                      <option value="INTERVIEWING">En entretien</option>
+                      <option value="OFFER">Offre reçue</option>
+                      <option value="REJECTED">Refusé</option>
+                    </select>
+                    {/* Bouton qui déclenche la suppression au clic */}
+                    <button
+                      onClick={() => handleDelete(app.id)}
+                      className="text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 px-3 py-1 rounded-md transition"
+                    >
+                      Supprimer
+                    </button>
+                  </div>
+                </div>
+                {/* Affichage conditionnel des retours de l'IA */}
+                {app.resumeMatchScore != null && (
+                  <div className="pt-3 border-t border-gray-100">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-sm font-semibold text-gray-700">Match IA :</span>
+                      <span className={`text-sm font-bold px-2 py-0.5 rounded ${
+                        app.resumeMatchScore > 75 ? "bg-green-100 text-green-700" : 
+                        app.resumeMatchScore > 50 ? "bg-orange-100 text-orange-700" : 
+                        "bg-red-100 text-red-700"
+                      }`}>
+                        {app.resumeMatchScore}%
+                      </span>
+                    </div>
+                    
+                    {app.missingSkills && app.missingSkills.length > 0 && (
+                      <div className="flex flex-wrap gap-2">
+                        <span className="text-xs text-gray-500 py-1">Manque :</span>
+                        {app.missingSkills.map((skill: string, index: number) => (
+                          <span key={index} className="text-xs bg-red-50 text-red-600 border border-red-100 px-2 py-1 rounded-md">
+                            {skill}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+##### Fichier : src\app\login\page.tsx
+"use client";
+
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import React, { useState } from "react";
+
+export default function LoginPage(){
+    // Déclaration des variables d'état pour les champs et les erreurs
+    const [email, setEmail] = useState("");
+    const [password, setPassword] = useState("");
+    const [error, setError] = useState("");
+    const router = useRouter();
+
+    const handleLogin = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setError("");
+
+        try{
+            // Appel API vers la route login du backend
+            const res = await fetch("http://localhost:8080/api/auth/login", {
+                method: "POST",
+                headers: {"Content-Type" : "application/json"},
+                body: JSON.stringify({email, password}),
+                credentials:"include" // Indispensable pour stocker le cookie JWT
+            });
+
+            if(res.ok){
+                //Redirection vers le tableau de bord si la connexion reussi
+                router.push("/dashboard");
+                
+            }else{
+                setError("Email ou mot de passe incorrect.");
+            }
+        }catch (err){
+            setError("Erreur de connexion au serveur");
+        }
+    };
+
+    return (
+        <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <form onSubmit={handleLogin} className="bg-white p-8 rounded-xl shadow-lg w-96 space-y-4">
+        <h1 className="text-2xl font-bold text-gray-800 text-center mb-6">Job Tracker</h1>
+        
+        {/* Affichage du message d'erreur si besoin */}
+        {error && <div className="p-3 bg-red-100 text-red-700 rounded-md text-sm">{error}</div>}
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+          <input
+            type="email"
+            value={email}
+            // Met à jour la variable d'état à chaque frappe
+            onChange={(e) => setEmail(e.target.value)}
+            className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+            required
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Mot de passe</label>
+          <input
+            type="password"
+            value={password}
+            // Met à jour la variable d'état du mot de passe
+            onChange={(e) => setPassword(e.target.value)}
+            className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+            required
+          />
+        </div>
+
+        <button
+          type="submit"
+          className="w-full bg-blue-600 text-white font-semibold py-2 rounded-lg hover:bg-blue-700 transition"
+        >
+          Se connecter
+        </button>
+
+        {/* NOUVEAU : Lien vers la page d'inscription */}
+        <div className="text-center mt-4">
+          <Link href="/register" className="text-sm text-blue-600 hover:underline">
+            Pas encore de compte ? S'inscrire
+          </Link>
+        </div>
+      </form>
+    </div>
+    );
+}
+##### Fichier : src\app\register\page.tsx
+"use client";
+
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
+
+export default function RegisterPage() {
+  // Déclaration des états
+  const [email, setEmail] = useState("");
+  const [passwordHash, setPasswordHash] = useState("");
+  const [error, setError] = useState("");
+  const router = useRouter();
+
+  const handleRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+
+    try {
+      // Appel API vers la route de création d'utilisateur
+      const res = await fetch("http://localhost:8080/api/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        // Le DTO backend attend "passwordHash" comme clé
+        body: JSON.stringify({ email, passwordHash }),
+      });
+
+      if (res.ok) {
+        // Redirection vers le login si le compte est créé
+        router.push("/login");
+      } else if (res.status === 409) {
+        // Gestion de l'erreur d'email en doublon (géré par ton backend)
+        setError("Cet email est déjà utilisé.");
+      } else {
+        setError("Erreur lors de la création du compte.");
+      }
+    } catch (err) {
+      setError("Erreur de connexion au serveur.");
+    }
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <form onSubmit={handleRegister} className="bg-white p-8 rounded-xl shadow-lg w-96 space-y-4">
+        <h1 className="text-2xl font-bold text-gray-800 text-center mb-6">Créer un compte</h1>
+        
+        {/* Affichage des erreurs */}
+        {error && <div className="p-3 bg-red-100 text-red-700 rounded-md text-sm">{error}</div>}
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+            required
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Mot de passe</label>
+          <input
+            type="password"
+            value={passwordHash}
+            onChange={(e) => setPasswordHash(e.target.value)}
+            className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+            required
+          />
+        </div>
+
+        <button
+          type="submit"
+          className="w-full bg-blue-600 text-white font-semibold py-2 rounded-lg hover:bg-blue-700 transition"
+        >
+          S'inscrire
+        </button>
+
+        {/* Lien de retour vers la connexion */}
+        <div className="text-center mt-4">
+          <Link href="/login" className="text-sm text-blue-600 hover:underline">
+            Déjà un compte ? Se connecter
+          </Link>
+        </div>
+      </form>
+    </div>
+  );
+}
+##### Fichier : src\app\globals.css
+@import "tailwindcss";
+##### Fichier : src\app\layout.tsx
+import type { Metadata } from "next";
+import { Geist, Geist_Mono } from "next/font/google";
+import "./globals.css";
+
+const geistSans = Geist({
+  variable: "--font-geist-sans",
+  subsets: ["latin"],
+});
+
+const geistMono = Geist_Mono({
+  variable: "--font-geist-mono",
+  subsets: ["latin"],
+});
+
+export const metadata: Metadata = {
+  title: "Create Next App",
+  description: "Generated by create next app",
+};
+
+export default function RootLayout({ children }: LayoutProps<"/">) {
+  return (
+    <html
+      lang="en"
+      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+    >
+      <body className="min-h-full flex flex-col">{children}</body>
+    </html>
+  );
+}
+##### Fichier : src\app\page.tsx
+import {redirect} from "next/navigation";
+export default function Home(){
+  // Redirige automatiquement l'utilisateur vers la page de login à la racine 
+  redirect("/login");
+}
+
